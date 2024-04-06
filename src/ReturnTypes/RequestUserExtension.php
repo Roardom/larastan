@@ -11,6 +11,7 @@ use PhpParser\Node\Expr\MethodCall;
 use PHPStan\Analyser\Scope;
 use PHPStan\Reflection\MethodReflection;
 use PHPStan\Reflection\ParametersAcceptorSelector;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Type\DynamicMethodReturnTypeExtension;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
@@ -24,6 +25,11 @@ final class RequestUserExtension implements DynamicMethodReturnTypeExtension
 {
     use HasContainer;
     use LoadsAuthModel;
+
+    public function __construct(
+        private ReflectionProvider $reflectionProvider,
+    ) {
+    }
 
     public function getClass(): string
     {
@@ -52,12 +58,24 @@ final class RequestUserExtension implements DynamicMethodReturnTypeExtension
             return ParametersAcceptorSelector::selectSingle($methodReflection->getVariants())->getReturnType();
         }
 
-        return TypeCombinator::addNull(
-            TypeCombinator::union(...array_map(
-                static fn (string $authModel): Type => new ObjectType($authModel),
-                $authModels,
-            )),
-        );
+        $modelTypes = TypeCombinator::union(...array_map(
+            static fn (string $authModel): Type => new ObjectType($authModel),
+            $authModels,
+        ));
+
+        $router               = $this->getContainer()->get('router');
+        $action               = $this->getActionFromScope($scope);
+        $isAuthenticatedRoute = false;
+
+        if ($router !== null && $action !== null) {
+            $isAuthenticatedRoute = $this->hasAuthenticationMiddleware($router, $action, $this->reflectionProvider);
+        }
+
+        if ($isAuthenticatedRoute) {
+            return $modelTypes;
+        }
+
+        return TypeCombinator::addNull($modelTypes);
     }
 
     private function getGuardFromMethodCall(Scope $scope, MethodCall $methodCall): string|null
@@ -76,5 +94,21 @@ final class RequestUserExtension implements DynamicMethodReturnTypeExtension
         }
 
         return $constantStrings[0]->getValue();
+    }
+
+    private function getActionFromScope(Scope $scope): string|null
+    {
+        if (! $scope->isInClass()) {
+            return null;
+        }
+
+        $class  = $scope->getClassReflection()->getName();
+        $method = $scope->getFunctionName();
+
+        if ($method === null) {
+            return null;
+        }
+
+        return $class . '@' . $method;
     }
 }

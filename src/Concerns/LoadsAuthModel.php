@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Larastan\Larastan\Concerns;
 
+use Illuminate\Auth\Middleware\Authenticate;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Routing\Router;
+use PHPStan\Reflection\ReflectionProvider;
 
 use function array_keys;
 use function array_reduce;
@@ -39,5 +42,22 @@ trait LoadsAuthModel
             },
             initial: [],
         );
+    }
+
+    private function hasAuthenticationMiddleware(Router $router, string $action, ReflectionProvider $reflectionProvider): bool
+    {
+        $route = $router->getRoutes()->getByAction($action);
+
+        if ($route === null) {
+            return false;
+        }
+
+        foreach ($router->gatherRouteMiddleware($route) as $middleware) {
+            if ($reflectionProvider->getClass($middleware)->isSubclassOf(Authenticate::class)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
